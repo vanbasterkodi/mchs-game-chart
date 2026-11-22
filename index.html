@@ -1154,11 +1154,28 @@ function buildPdfDoc(JsPDF,nameOverride){
         y=doc.lastAutoTable.finalY+12;
       });
     }
-    // key + footers
-    if(y>H-60){doc.addPage();y=40;}
-    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(MUTE[0],MUTE[1],MUTE[2]);
-    const key='KEY: '+Object.keys(CODES).map(c=>CODES[c].sym+' '+CODES[c].label).join('  |  ')+'.   PPP = points / possessions (F, D, OR and DR are not possessions).';
-    doc.text(doc.splitTextToSize(key,W-2*M),M,y+4);
+    // legend
+    const CHIP={make:[[31,122,58],[227,244,232]],miss:[[107,113,120],[238,240,241]],ft:[[29,95,174],[229,239,251]],to:[[180,35,24],[253,232,230]],foul:[[154,98,0],[255,242,214]],defl:[[105,65,198],[240,234,253]],reb:[[14,124,134],[224,244,245]]};
+    const legBody=[];
+    LEG_GROUPS.forEach(function(gp){
+      legBody.push([{content:gp[0].toUpperCase(),colSpan:4,styles:{fillColor:[236,238,233],fontStyle:'bold',textColor:INK,halign:'left'}}]);
+      gp[1].forEach(function(c){const d=CODES[c],inf=LEG_INFO[c]||['',''];const col=CHIP[d.cls]||CHIP.miss;
+        legBody.push([{content:d.sym,styles:{fillColor:col[1],textColor:col[0],fontStyle:'bold',halign:'center',fontSize:10}},d.label,inf[0],inf[1]]);});
+    });
+    const legH=24+legBody.length*15+70;
+    if(y+legH>H-30){doc.addPage();y=40;}
+    doc.autoTable(Object.assign({},base,{startY:y,
+      head:[[{content:'LEGEND',colSpan:4,styles:{halign:'left',fillColor:GREEN,textColor:255,fontSize:10}}],['Mark','Meaning','Scoring','Counts as']],
+      body:legBody,headStyles:{fillColor:[236,238,233],textColor:INK,fontStyle:'bold'},
+      styles:Object.assign({},base.styles,{halign:'left',cellPadding:2.5}),
+      columnStyles:{0:{cellWidth:50},1:{cellWidth:170,fontStyle:'bold'},2:{cellWidth:230},3:{cellWidth:120,textColor:MUTE}},
+      tableWidth:570,pageBreak:'avoid',rowPageBreak:'avoid'}));
+    y=doc.lastAutoTable.finalY+10;
+    doc.setFont('helvetica','normal');doc.setFontSize(8.5);doc.setTextColor(INK[0],INK[1],INK[2]);
+    const notes=['Offense rows record what MCHS did running that play. Defense rows record what the opponent did against that defense, so a make there is points allowed.',
+      'PPP (points per possession) = points / possessions. Offense: higher is better. Defense: lower is better. About 1.00 is the dividing line.',
+      'Steals and charges also count as turnovers. OR and DR do not add a possession because the shot before them already counted. BLOB = baseline out of bounds, SLOB = sideline out of bounds.'];
+    doc.text(doc.splitTextToSize(notes.join('\n'),W-2*M),M,y+4);
     const pages=doc.internal.getNumberOfPages();
     for(let i=1;i<=pages;i++){doc.setPage(i);doc.setFontSize(8);doc.setTextColor(MUTE[0],MUTE[1],MUTE[2]);doc.text('MCHS Game Chart  |  page '+i+' of '+pages,W-M,H-14,{align:'right'});}
     const name=nameOverride||(season?('MCHS-season-report_'+todayStr()+'.pdf'):('MCHS_'+(g0.date||todayStr())+'_vs_'+slug(g0.opp)+(rQ==='all'?'':'_'+rQ)+'.pdf'));
@@ -1192,7 +1209,7 @@ async function makePdf(){
 }
 
 /* ---------- version / updates ---------- */
-const APP_VERSION='2026-11-22 v4';
+const APP_VERSION='2026-11-22 v5';
 async function checkUpdate(manual){
   const info=$('#updInfo');
   try{
