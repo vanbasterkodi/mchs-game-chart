@@ -215,6 +215,7 @@ table.rp.lg td{white-space:normal}
 .gl .gt small{display:block;font-weight:500;color:var(--mute);font-size:12px}
 .gl.cur{background:var(--off-bg)}
 .btn.armed{background:var(--to);color:#fff;border-color:var(--to)}
+.ghf{display:flex;gap:10px;align-items:center;margin-top:8px}.ghf label{width:52px;font-size:12px;font-weight:700;color:var(--mute);text-transform:uppercase;letter-spacing:.05em}.ghf input{flex:1;min-width:0;border:1px solid var(--line2);border-radius:8px;padding:8px;background:var(--bg);font-size:16px}
 .addrow{display:flex;gap:8px;padding:10px 14px;border-top:1px solid var(--line)}
 
 /* modal */
@@ -289,6 +290,7 @@ table.rp.lg td{white-space:normal}
       <div><span class="flab">Scope</span><span class="seg" id="r-scope"></span></div>
       <div><span class="flab">Quarter</span><span class="seg" id="r-q"></span></div>
       <div><span class="flab">Show</span><span class="seg" id="r-side"></span></div>
+      <button class="btn pri" id="pdfBtn" style="margin-left:auto">PDF report</button>
     </div>
     <div class="kpis" id="kpis"></div>
     <div class="card"><div class="hd"><span class="h" style="font-size:20px;font-weight:800">What's working</span><span class="hint" id="minHint"></span></div>
@@ -317,6 +319,13 @@ table.rp.lg td{white-space:normal}
           <div style="display:flex;gap:8px;margin-top:10px"><button class="btn danger" id="bkReplace">Replace everything on this iPad</button><button class="btn" id="bkCancel">Cancel</button></div>
         </div>
       </div></div>
+    <div class="card" id="ghCard"><div class="hd"><span class="h" style="font-size:20px;font-weight:800">GitHub</span><span class="hint" id="ghInfo"></span></div>
+      <div class="bd">
+        <p class="muted" style="margin:0 0 10px;font-size:14px"><b>Upload</b> saves every game (and a full backup) to the <b>data</b> folder of your repo. <b>Load</b> pulls the latest upload onto this device, for example to move games to another iPad. PDF reports also save to <b>data/reports</b> once a token is set.</p>
+        <div class="ghf"><label for="ghRepo">Repo</label><input id="ghRepo" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="owner/repo"></div>
+        <div class="ghf"><label for="ghToken">Token</label><input id="ghToken" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste token (needed to upload)"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn pri" id="ghUp">Upload to GitHub</button><button class="btn" id="ghLoad">Load from GitHub</button></div>
+      </div></div>
     <div class="card" id="gameAdmin"><div class="hd"><span class="h" style="font-size:20px;font-weight:800">Games</span><span class="hint">Deleting a game removes all of its charted stats from the season report.</span></div>
       <div id="gamesList"></div></div>
     <p class="muted" style="margin:14px 2px 0">Add, rename, reorder or hide plays. Leave a name blank to keep an open line you can name during a game. Hidden plays keep their stats.</p>
@@ -344,6 +353,13 @@ table.rp.lg td{white-space:normal}
   <p class="muted" style="margin:6px 0 0;font-size:14px">Enter the PIN to delete games. This device remembers it.</p>
   <div class="fld"><input id="pinIn" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN"></div>
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px"><button class="btn" id="pinCancel">Cancel</button><button class="btn pri" id="pinOk">OK</button></div>
+</div></div>
+
+<div class="modal" id="pdfm"><div class="box">
+  <div class="h" style="font-size:24px;font-weight:800">PDF ready</div>
+  <p style="margin:6px 0 0;font-weight:600;word-break:break-all" id="pdfName"></p>
+  <p class="muted" style="margin:8px 0 0;font-size:13px" id="pdfUp"></p>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px"><button class="btn" id="pdfClose">Close</button><button class="btn pri" id="pdfShare">Share / Save PDF</button></div>
 </div></div>
 
 <div class="toast" id="toast"><span id="toastTxt"></span><button id="toastUndo">Undo</button></div>
@@ -904,13 +920,242 @@ function applyData(out){
   if(out)renderAll();
 }
 function start(){
-  bind();bindBackup();renderAll();
+  bind();bindBackup();bindGithub();bindPdf();renderAll();
   store=makeLocalStore();
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
   store.init(applyData);
   renderBackupInfo();
   try{if('serviceWorker' in navigator&&(location.protocol==='https:'||location.hostname==='localhost'))navigator.serviceWorker.register('sw.js').catch(function(){});}catch(e){}
 }
+/* ---------- shared file helpers ---------- */
+function b64utf8(t){return btoa(unescape(encodeURIComponent(t)));}
+function unb64utf8(b){return decodeURIComponent(escape(atob(String(b).replace(/\s/g,''))));}
+function hashStr(t){let h=5381;for(let i=0;i<t.length;i++)h=((h<<5)+h+t.charCodeAt(i))|0;return (h>>>0).toString(36);}
+function slug(t){return String(t||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,40)||'game';}
+function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+async function shareOrSave(blob,name,title){
+  try{const file=new File([blob],name,{type:blob.type});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:title});return true;}}
+  catch(e){if(e&&e.name==='AbortError')return false;}
+  try{const url=URL.createObjectURL(blob);const a=$('#bkLink');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);return true;}catch(e){}
+  return false;
+}
+
+/* ---------- GitHub ---------- */
+const GH_DEFAULT_REPO='vanbasterkodi/mchs-game-chart';
+function ghRepo(){return (ls.get('ghRepo','')||GH_DEFAULT_REPO).trim().replace(/^https?:\/\/github\.com\//,'').replace(/\/+$/,'');}
+function ghToken(){return (ls.get('ghToken','')||'').trim();}
+function ghPathEnc(p){return p.split('/').map(encodeURIComponent).join('/');}
+async function ghCall(method,path,body,needAuth){
+  const h={Accept:'application/vnd.github+json'};const tok=ghToken();
+  if(tok)h.Authorization='Bearer '+tok;else if(needAuth)throw new Error('Add your GitHub token first (Plays tab → GitHub).');
+  if(body)h['Content-Type']='application/json';
+  let r;
+  try{r=await fetch('https://api.github.com/repos/'+ghRepo()+'/contents/'+ghPathEnc(path)+(method==='GET'?'?t='+Date.now():''),{method:method,headers:h,body:body?JSON.stringify(body):undefined,cache:'no-store'});}
+  catch(e){throw new Error('No internet connection. Try again when the iPad is online.');}
+  return r;
+}
+async function ghErr(r){
+  if(r.status===401)return new Error('GitHub didn\'t accept the token. Check it and paste it again.');
+  if(r.status===403||r.status===404)return new Error('The token can\'t write to '+ghRepo()+'. Make sure it has Contents: Read and write for that repo.');
+  if(r.status===409||r.status===422)return new Error('GitHub refused the save ('+r.status+'). Tap Upload again.');
+  let m='';try{m=(await r.json()).message||'';}catch(e){}
+  return new Error('GitHub error '+r.status+(m?': '+m:''));
+}
+async function ghSha(path){const r=await ghCall('GET',path,null,false);if(r.status===404)return null;if(!r.ok)throw await ghErr(r);const j=await r.json();return j.sha||null;}
+async function ghPutB64(path,b64,msg){
+  for(let attempt=0;attempt<2;attempt++){
+    const sha=await ghSha(path);const body={message:msg,content:b64};if(sha)body.sha=sha;
+    const r=await ghCall('PUT',path,body,true);
+    if(r.ok)return true;
+    if((r.status===409||r.status===422)&&attempt===0)continue;
+    throw await ghErr(r);
+  }
+}
+async function ghDelete(path,msg){const sha=await ghSha(path);if(!sha)return;const r=await ghCall('DELETE',path,{message:msg,sha:sha},true);if(!r.ok&&r.status!==404)throw await ghErr(r);}
+function gameFile(id,g){return 'data/games/'+(g.date||'nodate')+'_'+slug(g.opp)+'_'+id+'.json';}
+function ghStatus(t,bad){const el=$('#ghInfo');el.textContent=t;el.style.color=bad?'var(--to)':'';}
+function renderGhInfo(){const t=ls.get('ghLast',0);ghStatus(ghToken()?('Last upload: '+fmtAgo(t)):'Add a token to upload. Loading works without one.');}
+let ghBusy=false;
+async function ghUpload(){
+  if(ghBusy)return;
+  if(!ghToken()){ghStatus('Paste your GitHub token first.',true);$('#ghToken').focus();return;}
+  ghBusy=true;$('#ghUp').disabled=true;$('#ghLoad').disabled=true;
+  try{
+    for(const id in pend)await flush(id);
+    const d=store.snapshot();const hashes=ls.get('ghHashes',{});let n=0;const ids=Object.keys(d.games);
+    for(let i=0;i<ids.length;i++){
+      const id=ids[i],g=d.games[id];
+      let t=0,o=0;QS.forEach(q=>{t+=effScore(g,'team',q);o+=effScore(g,'opp',q);});
+      const text=JSON.stringify({app:'mchs-game-chart',format:1,id:id,score:{mchs:t,opp:o},game:g},null,1);
+      const h=hashStr(text),path=gameFile(id,g),prev=hashes[id];
+      if(prev&&prev.h===h&&prev.p===path)continue;
+      ghStatus('Uploading '+gameTitle(g)+'… ('+(i+1)+' of '+ids.length+')');
+      if(prev&&prev.p!==path){try{await ghDelete(prev.p,'Rename '+gameTitle(g));}catch(e){}}
+      await ghPutB64(path,b64utf8(text),'Game chart: '+gameTitle(g));
+      hashes[id]={h:h,p:path};ls.set('ghHashes',hashes);n++;
+    }
+    for(const id in hashes){if(!d.games[id]){ghStatus('Removing deleted games…');try{await ghDelete(hashes[id].p,'Remove deleted game');}catch(e){}delete hashes[id];ls.set('ghHashes',hashes);}}
+    ghStatus('Saving full backup…');
+    await ghPutB64('data/latest.json',b64utf8(JSON.stringify({app:'mchs-game-chart',format:1,exported:new Date().toISOString(),playbook:d.playbook,games:d.games})),'Backup from iPad ('+ids.length+' games)');
+    ls.set('ghLast',Date.now());renderGhInfo();toastMsg('Uploaded to GitHub'+(n?' ('+n+' game'+(n===1?'':'s')+' updated)':''));
+  }catch(e){ghStatus(e.message,true);}
+  ghBusy=false;$('#ghUp').disabled=false;$('#ghLoad').disabled=false;
+}
+async function ghLoad(){
+  if(ghBusy)return;ghBusy=true;$('#ghLoad').disabled=true;ghStatus('Loading from GitHub…');
+  try{
+    const r=await ghCall('GET','data/latest.json',null,false);
+    if(r.status===404)throw new Error('Nothing uploaded to GitHub yet.');
+    if(!r.ok)throw await ghErr(r);
+    const j=await r.json();let text;
+    if(j.content)text=unb64utf8(j.content);
+    else{const br=await fetch('https://api.github.com/repos/'+ghRepo()+'/git/blobs/'+j.sha,{headers:ghToken()?{Authorization:'Bearer '+ghToken(),Accept:'application/vnd.github+json'}:{Accept:'application/vnd.github+json'},cache:'no-store'});if(!br.ok)throw await ghErr(br);text=unb64utf8((await br.json()).content);}
+    const d=JSON.parse(text);
+    if(!d||d.app!=='mchs-game-chart'||!d.playbook||typeof d.games!=='object')throw new Error('The file on GitHub isn\'t a Game Chart backup.');
+    pendingRestore=d;const n=Object.keys(d.games).length;
+    $('#bkRestoreTxt').textContent='From GitHub, uploaded '+new Date(d.exported).toLocaleString()+': '+n+' game'+(n===1?'':'s')+' and '+((d.playbook.plays||[]).length)+' plays. Loading replaces the '+Object.keys(games).length+' game(s) and plays on this device.';
+    $('#bkRestore').style.display='';$('#backupCard').scrollIntoView({behavior:'smooth',block:'start'});
+    renderGhInfo();
+  }catch(e){ghStatus(e.message,true);}
+  ghBusy=false;$('#ghLoad').disabled=false;
+}
+function bindGithub(){
+  $('#ghRepo').value=ghRepo();$('#ghToken').value=ghToken();
+  $('#ghRepo').addEventListener('change',e=>{ls.set('ghRepo',e.target.value.trim());ls.set('ghHashes',{});renderGhInfo();});
+  $('#ghToken').addEventListener('change',e=>{ls.set('ghToken',e.target.value.trim());renderGhInfo();});
+  $('#ghUp').onclick=ghUpload;$('#ghLoad').onclick=ghLoad;
+  renderGhInfo();
+}
+
+/* ---------- PDF report ---------- */
+function loadScript(src){return new Promise(function(res,rej){const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=function(){rej(new Error('Could not load the PDF tool. Open the chart once while online.'));};document.head.appendChild(s);});}
+async function pdfLib(){
+  if(!(window.jspdf&&window.jspdf.jsPDF))await loadScript('jspdf.umd.min.js');
+  if(!window.jspdf.jsPDF.API.autoTable)await loadScript('jspdf.plugin.autotable.min.js');
+  return window.jspdf.jsPDF;
+}
+const SECDEF_COLS=['Play','Poss','Pts','PPP','FG','FG%','Lay','Jmp','3PT','FT pts','TO','S','C','D','OR','DR'];
+function statRow(name,a){return[name,a.poss,a.pts,f2(ppp(a)),a.fgm+'-'+a.fga,pct(a.fgm,a.fga),a.lm+'-'+a.la,a.jm+'-'+a.ja,a.tpm+'-'+a.tpa,a.ftm,a.to,a.stl,a.chg,a.defl,a.orb,a.drb];}
+let lastPdf=null;
+function bindPdf(){
+  $('#pdfBtn').onclick=makePdf;
+  $('#pdfShare').onclick=async function(){if(!lastPdf)return;const ok=await shareOrSave(lastPdf.blob,lastPdf.name,'MCHS game report');if(!ok)$('#pdfUp').textContent='This browser couldn\'t open the share menu.';};
+  $('#pdfClose').onclick=function(){$('#pdfm').classList.remove('show');};
+}
+async function makePdf(){
+  const btn=$('#pdfBtn');if(btn.disabled)return;btn.disabled=true;const old=btn.textContent;btn.textContent='Making PDF…';
+  try{
+    for(const id in pend)await flush(id);
+    const JsPDF=await pdfLib();
+    const gs=scopeGames();if(!gs.length)throw new Error('No game to report on yet.');
+    const season=rScope==='season';const g0=game();
+    const qList=rQ==='all'?QS:[rQ];
+    const doc=new JsPDF({orientation:'landscape',unit:'pt',format:'letter'});
+    const W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),M=30;
+    const GREEN=[20,90,46],GOLD=[245,194,43],DGOLD=[138,100,0],INK=[21,24,28],MUTE=[110,116,124];
+    // header band
+    doc.setFillColor(GREEN[0],GREEN[1],GREEN[2]);doc.rect(0,0,W,48,'F');doc.setFillColor(GOLD[0],GOLD[1],GOLD[2]);doc.rect(0,48,W,4,'F');
+    doc.setTextColor(255,255,255);doc.setFont('helvetica','bold');doc.setFontSize(18);doc.text('MCHS',M,31);
+    doc.setTextColor(GOLD[0],GOLD[1],GOLD[2]);doc.text('GAME CHART',M+56,31);
+    doc.setTextColor(255,255,255);doc.setFontSize(12);
+    const title=season?('Season report - '+gs.length+' game'+(gs.length===1?'':'s')):(gameTitle(g0).replace(/ · /g,'  |  ')+(g0.site?'  |  '+g0.site:''));
+    doc.text(title,W-M,24,{align:'right'});
+    doc.setFont('helvetica','normal');doc.setFontSize(9);
+    doc.text((rQ==='all'?'All quarters':QL[rQ]+' quarter only')+(rSide==='all'?'':(rSide==='off'?'  |  Offense only':'  |  Defense only'))+'  |  Made '+new Date().toLocaleDateString(),W-M,38,{align:'right'});
+    let y=68;
+    // per-play stats
+    const rows={};plays.forEach(p=>rows[p.id]=playStats(gs,p.id,rQ));
+    const secAgg=k=>plays.filter(p=>p.sec===k).reduce((a,p)=>addInto(a,rows[p.id]),blank());
+    const O=addInto(secAgg('off'),secAgg('oib')),D=addInto(secAgg('def'),secAgg('dib'));
+    let st=0,so=0;gs.forEach(g=>qList.forEach(q=>{st+=effScore(g,'team',q);so+=effScore(g,'opp',q);}));
+    // score / games table
+    const base={theme:'grid',styles:{fontSize:8.5,cellPadding:3,textColor:INK,lineColor:[210,212,206],lineWidth:0.5,halign:'center'},headStyles:{fillColor:GREEN,textColor:255,fontStyle:'bold'},margin:{left:M,right:M}};
+    if(!season){
+      const g=g0;const ot=QS.some(q=>q==='ot'&&(effScore(g,'team','ot')||effScore(g,'opp','ot')||chartedQ(g,'ot')));const qs=ot?QS:QS.slice(0,4);
+      let rt=0,ro=0;const tr=['MCHS'],orr=['Opp'],pm=['+/-'];
+      qs.forEach(q=>{const a=effScore(g,'team',q),b=effScore(g,'opp',q);rt+=a;ro+=b;tr.push(a);orr.push(b);pm.push((a-b>0?'+':'')+(a-b));});
+      tr.push(rt);orr.push(ro);pm.push((rt-ro>0?'+':'')+(rt-ro));
+      doc.autoTable(Object.assign({},base,{startY:y,head:[['Score'].concat(qs.map(q=>QL[q])).concat(['Final'])],body:[tr,orr,pm],tableWidth:330,columnStyles:{0:{halign:'left',fontStyle:'bold'}}}));
+      const rb=[['MCHS',effReb(g,'team','h1'),effReb(g,'team','h2'),effReb(g,'team','h1')+effReb(g,'team','h2')],['Opp',effReb(g,'opp','h1'),effReb(g,'opp','h2'),effReb(g,'opp','h1')+effReb(g,'opp','h2')]];
+      doc.autoTable(Object.assign({},base,{startY:y,head:[['Rebounds','1st half','2nd half','Total']],body:rb,tableWidth:230,margin:{left:M+345},columnStyles:{0:{halign:'left',fontStyle:'bold'}}}));
+      y=Math.max(doc.lastAutoTable.finalY,y+60)+14;
+    }else{
+      const list=sortedGames().map(e=>e[1]).filter(g=>gs.indexOf(g)>=0).reverse();
+      const body=list.map(g=>{let t=0,o=0;qList.forEach(q=>{t+=effScore(g,'team',q);o+=effScore(g,'opp',q);});return[g.num||'',g.date?fmtDate(g.date):'',g.opp||'',g.site||'',t+' - '+o,t>o?'W':t<o?'L':'T'];});
+      doc.autoTable(Object.assign({},base,{startY:y,head:[['#','Date','Opponent','Site','Score','W/L']],body:body,tableWidth:420,columnStyles:{2:{halign:'left'}}}));
+      y=doc.lastAutoTable.finalY+14;
+    }
+    // KPI line
+    doc.setTextColor(INK[0],INK[1],INK[2]);doc.setFont('helvetica','bold');doc.setFontSize(10);
+    const k1=(season?'Avg score '+(st/gs.length).toFixed(1)+' - '+(so/gs.length).toFixed(1):'Score '+st+' - '+so);
+    const parts=[k1];
+    if(rSide!=='def')parts.push('Offense PPP '+f2(ppp(O))+' ('+O.pts+' pts / '+O.poss+' poss)','Our TO '+O.to,'Off reb '+O.orb);
+    if(rSide!=='off')parts.push('Defense PPP allowed '+f2(ppp(D))+' ('+D.pts+' / '+D.poss+')','Forced TO '+D.to+' (S '+D.stl+', C '+D.chg+')','Deflections '+D.defl,'Def reb '+D.drb);
+    const lines=doc.splitTextToSize(parts.join('    '),W-2*M);doc.text(lines,M,y);y+=lines.length*13+6;
+    // play tables
+    SECTIONS.filter(s=>rSide==='all'||(rSide==='def')===isDef(s.key)).forEach(s=>{
+      const list=plays.filter(p=>p.sec===s.key&&((!p.hidden&&(playLabel(p)||rows[p.id].poss))||rows[p.id].poss||rows[p.id].defl));
+      if(!list.length)return;
+      const tot=list.reduce((a,p)=>addInto(a,rows[p.id]),blank());
+      const def=isDef(s.key);
+      doc.autoTable(Object.assign({},base,{startY:y,
+        head:[[{content:s.label.toUpperCase()+(def?'   (opponent results - lower PPP is better)':''),colSpan:SECDEF_COLS.length,styles:{halign:'left',fillColor:def?GOLD:GREEN,textColor:def?[20,48,28]:255,fontSize:10}}],SECDEF_COLS],
+        body:list.map(p=>statRow((playLabel(p)||'(unnamed)')+(p.tag?' - '+p.tag:''),rows[p.id])),
+        foot:[statRow('TOTAL',tot)],
+        headStyles:{fillColor:[236,238,233],textColor:INK,fontStyle:'bold'},footStyles:{fillColor:[236,238,233],textColor:INK,fontStyle:'bold'},
+        columnStyles:{0:{halign:'left',fontStyle:'bold',cellWidth:120},3:{fontStyle:'bold'}},
+        didParseCell:function(c){if(c.section==='body'&&c.column.index>0&&rows&&c.row.raw&&c.row.raw[1]===0&&c.row.raw[15]===0&&c.row.raw[13]===0)c.cell.styles.textColor=MUTE;}
+      }));
+      y=doc.lastAutoTable.finalY+12;
+    });
+    // by quarter
+    const qa=q=>{const o=blank(),d=blank();gs.forEach(g=>plays.forEach(p=>tally(marksOf(g,p.id,q),isDef(p.sec)?d:o)));let t=0,op=0;gs.forEach(g=>{t+=effScore(g,'team',q);op+=effScore(g,'opp',q);});return{o:o,d:d,t:t,op:op};};
+    const Q=QS.map(q=>[q,qa(q)]).filter(e=>e[0]!=='ot'||e[1].o.poss||e[1].d.poss||e[1].t||e[1].op);
+    const fm=v=>season?(v/gs.length).toFixed(1):v;
+    const qb=[[season?'Avg score':'Score'].concat(Q.map(e=>fm(e[1].t)+' - '+fm(e[1].op)))];
+    if(rSide!=='def'){qb.push(['Off PPP'].concat(Q.map(e=>f2(ppp(e[1].o))+' ('+e[1].o.poss+')')));qb.push(['Our TO'].concat(Q.map(e=>e[1].o.to)));qb.push(['Off reb'].concat(Q.map(e=>e[1].o.orb)));}
+    if(rSide!=='off'){qb.push(['Def PPP'].concat(Q.map(e=>f2(ppp(e[1].d))+' ('+e[1].d.poss+')')));qb.push(['Forced TO'].concat(Q.map(e=>e[1].d.to)));qb.push(['Steals / Charges'].concat(Q.map(e=>e[1].d.stl+' / '+e[1].d.chg)));qb.push(['Deflections'].concat(Q.map(e=>e[1].d.defl)));qb.push(['Def reb'].concat(Q.map(e=>e[1].d.drb)));}
+    doc.autoTable(Object.assign({},base,{startY:y,head:[['By quarter'].concat(Q.map(e=>QL[e[0]]))],body:qb,tableWidth:Math.min(W-2*M,140+Q.length*90),columnStyles:{0:{halign:'left',fontStyle:'bold'}},pageBreak:'avoid'}));
+    y=doc.lastAutoTable.finalY+12;
+    // charted marks (one game)
+    if(!season){
+      const g=g0;const qs=QS.filter(q=>q!=='ot'||chartedQ(g,'ot'));
+      SECTIONS.filter(s=>rSide==='all'||(rSide==='def')===isDef(s.key)).forEach((s,si)=>{
+        const list=plays.filter(p=>p.sec===s.key&&qs.some(q=>marksOf(g,p.id,q).length));
+        if(!list.length)return;
+        const def=isDef(s.key);
+        doc.autoTable(Object.assign({},base,{startY:y,
+          head:[[{content:'CHARTED MARKS - '+s.label.toUpperCase(),colSpan:qs.length+1,styles:{halign:'left',fillColor:def?GOLD:GREEN,textColor:def?[20,48,28]:255}}],['Play'].concat(qs.map(q=>QL[q]))],
+          body:list.map(p=>[(playLabel(p)||'(unnamed)')+(p.tag?' - '+p.tag:'')].concat(qs.map(q=>marksOf(g,p.id,q).map(sym).join('  ')))),
+          headStyles:{fillColor:[236,238,233],textColor:INK,fontStyle:'bold'},
+          columnStyles:(function(){const cs={0:{halign:'left',fontStyle:'bold',cellWidth:120}};const w=(W-2*M-120)/qs.length;qs.forEach((q,i)=>cs[i+1]={cellWidth:w});return cs;})(),styles:Object.assign({},base.styles,{halign:'left'}),pageBreak:'avoid',rowPageBreak:'avoid'
+        }));
+        y=doc.lastAutoTable.finalY+12;
+      });
+    }
+    // key + footers
+    if(y>H-60){doc.addPage();y=40;}
+    doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(MUTE[0],MUTE[1],MUTE[2]);
+    const key='KEY: '+Object.keys(CODES).map(c=>CODES[c].sym+' '+CODES[c].label).join('  |  ')+'.   PPP = points / possessions (F, D, OR and DR are not possessions).';
+    doc.text(doc.splitTextToSize(key,W-2*M),M,y+4);
+    const pages=doc.internal.getNumberOfPages();
+    for(let i=1;i<=pages;i++){doc.setPage(i);doc.setFontSize(8);doc.setTextColor(MUTE[0],MUTE[1],MUTE[2]);doc.text('MCHS Game Chart  |  page '+i+' of '+pages,W-M,H-14,{align:'right'});}
+    const name=season?('MCHS-season-report_'+todayStr()+'.pdf'):('MCHS_'+(g0.date||todayStr())+'_vs_'+slug(g0.opp)+(rQ==='all'?'':'_'+rQ)+'.pdf');
+    const b64=doc.output('datauristring').split(',')[1];
+    const blob=doc.output('blob');
+    lastPdf={blob:blob,name:name};
+    $('#pdfName').textContent=name;$('#pdfUp').textContent='';$('#pdfm').classList.add('show');
+    btn.textContent=old;btn.disabled=false;
+    // upload a copy to GitHub when a token is saved
+    if(ghToken()){
+      $('#pdfUp').style.color='';$('#pdfUp').textContent='Uploading a copy to GitHub…';
+      ghPutB64('data/reports/'+name,b64,'PDF report: '+name).then(function(){$('#pdfUp').textContent='Copy saved to GitHub: data/reports/'+name;},function(e){$('#pdfUp').style.color='var(--to)';$('#pdfUp').textContent='GitHub upload failed: '+e.message;});
+    }else $('#pdfUp').textContent='Tip: add a GitHub token on the Plays tab to also save reports to GitHub.';
+  }catch(e){banner(e.message||String(e));}
+  btn.textContent=old;btn.disabled=false;
+}
+
 /* ---------- backup / restore ---------- */
 function fmtAgo(t){if(!t)return'never';const d=Math.floor((Date.now()-t)/864e5);if(d<1)return'today';if(d===1)return'yesterday';return d+' days ago';}
 function renderBackupInfo(){const t=ls.get('lastBackup',0);$('#bkInfo').textContent='Last backup: '+fmtAgo(t);
@@ -924,16 +1169,9 @@ function bindBackup(){
     const out={app:'mchs-game-chart',format:1,exported:new Date().toISOString(),playbook:d.playbook,games:d.games};
     const day=new Date();const name='MCHS-chart-backup-'+day.getFullYear()+'-'+String(day.getMonth()+1).padStart(2,'0')+'-'+String(day.getDate()).padStart(2,'0')+'.json';
     const text=JSON.stringify(out);
-    let done=false;
-    try{
-      const file=new File([text],name,{type:'application/json'});
-      if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:'MCHS Game Chart backup'});done=true;}
-    }catch(e){ if(e&&e.name==='AbortError'){return;} }
-    if(!done){
-      try{const url=URL.createObjectURL(new Blob([text],{type:'application/json'}));const a=$('#bkLink');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),20000);done=true;}catch(e){}
-    }
+    const done=await shareOrSave(new Blob([text],{type:'application/json'}),name,'MCHS Game Chart backup');
     if(done){ls.set('lastBackup',Date.now());renderBackupInfo();toastMsg('Backup saved: '+name);}
-    else banner('This browser could not save the backup file.');
+
   };
   $('#bkFile').onchange=function(e){
     const f=e.target.files&&e.target.files[0];e.target.value='';if(!f)return;
@@ -952,7 +1190,8 @@ function bindBackup(){
     if(!pendingRestore)return;
     for(const id in pend)delete pend[id];
     for(const id in deleted)delete deleted[id];
-    store.restore(pendingRestore,applyData);gameId=null;
+    gameId=null;ls.set('game',null);$('#scoreTbl').dataset.built='';$('#rebTbl').dataset.built='';
+    store.restore(pendingRestore,applyData);
     $('#bkRestore').style.display='none';pendingRestore=null;banner('');toastMsg('Backup restored');
   };
 }
