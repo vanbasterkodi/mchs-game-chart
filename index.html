@@ -329,6 +329,9 @@ table.rp.lg td{white-space:normal}
       </div></div>
     <div class="card" id="gameAdmin"><div class="hd"><span class="h" style="font-size:20px;font-weight:800">Games</span><span class="hint">Deleting a game removes all of its charted stats from the season report.</span></div>
       <div id="gamesList"></div></div>
+    <div class="card"><div class="bd" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <span style="font-weight:700">App version <span id="appVer"></span></span><span class="hint" id="updInfo"></span>
+      <button class="btn sm" id="updBtn" style="margin-left:auto">Check for updates</button></div></div>
     <p class="muted" style="margin:14px 2px 0">Add, rename, reorder or hide plays. Leave a name blank to keep an open line you can name during a game. Hidden plays keep their stats.</p>
     <div class="cols"><div id="pe-off"></div><div id="pe-def"></div></div>
     <div class="cols"><div id="pe-oib"></div><div id="pe-dib"></div></div>
@@ -921,7 +924,7 @@ function applyData(out){
   if(out)renderAll();
 }
 function start(){
-  bind();bindBackup();bindGithub();bindPdf();renderAll();
+  bind();bindBackup();bindGithub();bindPdf();bindUpdate();renderAll();
   store=makeLocalStore();
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
   store.init(applyData);
@@ -1186,6 +1189,32 @@ async function makePdf(){
     }else $('#pdfUp').textContent='Tip: add a GitHub token on the Plays tab to also save reports to GitHub.';
   }catch(e){banner(e.message||String(e));}
   btn.textContent=old;btn.disabled=false;
+}
+
+/* ---------- version / updates ---------- */
+const APP_VERSION='2026-11-22 v4';
+async function checkUpdate(manual){
+  const info=$('#updInfo');
+  try{
+    const r=await fetch('index.html?v='+Date.now(),{cache:'no-store'});if(!r.ok)throw 0;
+    const t=await r.text();const m=t.match(/APP_VERSION='([^']+)'/);const latest=m?m[1]:null;
+    if(latest&&latest!==APP_VERSION){
+      const busy=sheet.open||$$('.modal.show').length||(document.activeElement&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName));
+      if(!manual&&(busy||Date.now()-ls.get('updTry',0)<180000)){info.textContent='Update '+latest+' ready. Tap Check for updates.';return;}
+      ls.set('updTry',Date.now());
+      info.textContent='Updating to '+latest+'…';
+      try{const reg=navigator.serviceWorker&&await navigator.serviceWorker.getRegistration();if(reg)await reg.update();}catch(e){}
+      for(const id in pend)await flush(id);
+      setTimeout(()=>location.reload(),600);
+    }else if(manual)info.textContent='You have the latest version.';
+  }catch(e){if(manual)info.textContent='Can\'t check right now (no internet?).';}
+}
+function bindUpdate(){
+  $('#appVer').textContent=APP_VERSION;
+  $('#updBtn').onclick=()=>checkUpdate(true);
+  // check on launch and whenever the app comes back to the front
+  setTimeout(()=>checkUpdate(false),1500);
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkUpdate(false);});
 }
 
 /* ---------- backup / restore ---------- */
