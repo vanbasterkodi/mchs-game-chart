@@ -321,7 +321,7 @@ table.rp.lg td{white-space:normal}
       </div></div>
     <div class="card" id="ghCard"><div class="hd"><span class="h" style="font-size:20px;font-weight:800">GitHub</span><span class="hint" id="ghInfo"></span></div>
       <div class="bd">
-        <p class="muted" style="margin:0 0 10px;font-size:14px"><b>Upload</b> saves every game (and a full backup) to the <b>data</b> folder of your repo. <b>Load</b> pulls the latest upload onto this device, for example to move games to another iPad. PDF reports also save to <b>data/reports</b> once a token is set.</p>
+        <p class="muted" style="margin:0 0 10px;font-size:14px"><b>Upload</b> saves every game, a PDF report for each game, a season report, and a full backup to the <b>data</b> folder of your repo. <b>Load</b> pulls the latest upload onto this device, for example to move games to another iPad. PDF reports also save to <b>data/reports</b> once a token is set.</p>
         <div class="ghf"><label for="ghRepo">Repo</label><input id="ghRepo" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="owner/repo"></div>
         <div class="ghf"><label for="ghToken">Token</label><input id="ghToken" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste token (needed to upload)"></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn pri" id="ghUp">Upload to GitHub</button><button class="btn" id="ghLoad">Load from GitHub</button></div>
@@ -996,10 +996,30 @@ async function ghUpload(){
       await ghPutB64(path,b64utf8(text),'Game chart: '+gameTitle(g));
       hashes[id]={h:h,p:path};ls.set('ghHashes',hashes);n++;
     }
-    for(const id in hashes){if(!d.games[id]){ghStatus('Removing deleted games…');try{await ghDelete(hashes[id].p,'Remove deleted game');}catch(e){}delete hashes[id];ls.set('ghHashes',hashes);}}
+    for(const id in hashes){if(!d.games[id]){ghStatus('Removing deleted games…');try{await ghDelete(hashes[id].p,'Remove deleted game');}catch(e){}if(hashes[id].r){try{await ghDelete(hashes[id].r,'Remove report for deleted game');}catch(e){}}delete hashes[id];ls.set('ghHashes',hashes);ls.set('ghSeasonDone',false);}}
+    // PDF reports: one per new/changed game, plus the season report
+    let JsPDF=null,pdfNote='';
+    try{JsPDF=await pdfLib();}catch(e){pdfNote=' (PDF reports skipped: '+e.message+')';}
+    if(JsPDF){
+      let made=0;
+      for(let i=0;i<ids.length;i++){
+        const id=ids[i],hs=hashes[id];if(!hs||hs.rh===hs.h)continue;
+        ghStatus('Making PDF for '+gameTitle(d.games[id])+'…');
+        const out=buildPdfFor(JsPDF,{scope:'game',gid:id});const rp='data/reports/'+out.name;
+        if(hs.r&&hs.r!==rp){try{await ghDelete(hs.r,'Rename report');}catch(e){}}
+        await ghPutB64(rp,out.b64,'PDF report: '+gameTitle(d.games[id]));
+        hs.r=rp;hs.rh=hs.h;ls.set('ghHashes',hashes);made++;
+      }
+      if(ids.length&&(made||n||!ls.get('ghSeasonDone',false))){
+        ghStatus('Making season report…');
+        const out=buildPdfFor(JsPDF,{scope:'season'},'MCHS-season-report.pdf');
+        await ghPutB64('data/reports/MCHS-season-report.pdf',out.b64,'Season report ('+ids.length+' games)');
+        ls.set('ghSeasonDone',true);
+      }
+    }
     ghStatus('Saving full backup…');
     await ghPutB64('data/latest.json',b64utf8(JSON.stringify({app:'mchs-game-chart',format:1,exported:new Date().toISOString(),playbook:d.playbook,games:d.games})),'Backup from iPad ('+ids.length+' games)');
-    ls.set('ghLast',Date.now());renderGhInfo();toastMsg('Uploaded to GitHub'+(n?' ('+n+' game'+(n===1?'':'s')+' updated)':''));
+    ls.set('ghLast',Date.now());renderGhInfo();if(pdfNote)ghStatus('Uploaded'+pdfNote,true);toastMsg('Uploaded to GitHub'+(n?' ('+n+' game'+(n===1?'':'s')+' updated)':'')+' with PDF reports');
   }catch(e){ghStatus(e.message,true);}
   ghBusy=false;$('#ghUp').disabled=false;$('#ghLoad').disabled=false;
 }
@@ -1023,7 +1043,7 @@ async function ghLoad(){
 }
 function bindGithub(){
   $('#ghRepo').value=ghRepo();$('#ghToken').value=ghToken();
-  $('#ghRepo').addEventListener('change',e=>{ls.set('ghRepo',e.target.value.trim());ls.set('ghHashes',{});renderGhInfo();});
+  $('#ghRepo').addEventListener('change',e=>{ls.set('ghRepo',e.target.value.trim());ls.set('ghHashes',{});ls.set('ghSeasonDone',false);renderGhInfo();});
   $('#ghToken').addEventListener('change',e=>{ls.set('ghToken',e.target.value.trim());renderGhInfo();});
   $('#ghUp').onclick=ghUpload;$('#ghLoad').onclick=ghLoad;
   renderGhInfo();
@@ -1044,11 +1064,7 @@ function bindPdf(){
   $('#pdfShare').onclick=async function(){if(!lastPdf)return;const ok=await shareOrSave(lastPdf.blob,lastPdf.name,'MCHS game report');if(!ok)$('#pdfUp').textContent='This browser couldn\'t open the share menu.';};
   $('#pdfClose').onclick=function(){$('#pdfm').classList.remove('show');};
 }
-async function makePdf(){
-  const btn=$('#pdfBtn');if(btn.disabled)return;btn.disabled=true;const old=btn.textContent;btn.textContent='Making PDF…';
-  try{
-    for(const id in pend)await flush(id);
-    const JsPDF=await pdfLib();
+function buildPdfDoc(JsPDF,nameOverride){
     const gs=scopeGames();if(!gs.length)throw new Error('No game to report on yet.');
     const season=rScope==='season';const g0=game();
     const qList=rQ==='all'?QS:[rQ];
@@ -1142,9 +1158,24 @@ async function makePdf(){
     doc.text(doc.splitTextToSize(key,W-2*M),M,y+4);
     const pages=doc.internal.getNumberOfPages();
     for(let i=1;i<=pages;i++){doc.setPage(i);doc.setFontSize(8);doc.setTextColor(MUTE[0],MUTE[1],MUTE[2]);doc.text('MCHS Game Chart  |  page '+i+' of '+pages,W-M,H-14,{align:'right'});}
-    const name=season?('MCHS-season-report_'+todayStr()+'.pdf'):('MCHS_'+(g0.date||todayStr())+'_vs_'+slug(g0.opp)+(rQ==='all'?'':'_'+rQ)+'.pdf');
+    const name=nameOverride||(season?('MCHS-season-report_'+todayStr()+'.pdf'):('MCHS_'+(g0.date||todayStr())+'_vs_'+slug(g0.opp)+(rQ==='all'?'':'_'+rQ)+'.pdf'));
     const b64=doc.output('datauristring').split(',')[1];
     const blob=doc.output('blob');
+    return{name:name,b64:b64,blob:blob};
+}
+// Build a report for a given view without touching what's on screen.
+function buildPdfFor(JsPDF,view,nameOverride){
+  const keep=[rScope,rQ,rSide,gameId];
+  rScope=view.scope;rQ=view.q||'all';rSide=view.side||'all';if(view.gid)gameId=view.gid;
+  try{return buildPdfDoc(JsPDF,nameOverride);}
+  finally{rScope=keep[0];rQ=keep[1];rSide=keep[2];gameId=keep[3];}
+}
+async function makePdf(){
+  const btn=$('#pdfBtn');if(btn.disabled)return;btn.disabled=true;const old=btn.textContent;btn.textContent='Making PDF…';
+  try{
+    for(const id in pend)await flush(id);
+    const JsPDF=await pdfLib();
+    const out=buildPdfDoc(JsPDF);const name=out.name,b64=out.b64,blob=out.blob;
     lastPdf={blob:blob,name:name};
     $('#pdfName').textContent=name;$('#pdfUp').textContent='';$('#pdfm').classList.add('show');
     btn.textContent=old;btn.disabled=false;
