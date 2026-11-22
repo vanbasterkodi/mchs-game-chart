@@ -325,6 +325,7 @@ table.rp.lg td{white-space:normal}
         <div class="ghf"><label for="ghRepo">Repo</label><input id="ghRepo" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="owner/repo"></div>
         <div class="ghf"><label for="ghToken">Token</label><input id="ghToken" type="password" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="Paste token (needed to upload)"></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn pri" id="ghUp">Upload to GitHub</button><button class="btn" id="ghLoad">Load from GitHub</button></div>
+        <div id="ghHelp" class="hint" style="margin-top:12px;line-height:1.5">No token yet? <a class="btn sm" style="text-decoration:none;display:inline-block" href="https://github.com/settings/personal-access-tokens/new?name=MCHS+iPad+chart&amp;description=Upload+game+charts+and+PDF+reports+from+the+iPad&amp;target_name=vanbasterkodi&amp;expires_in=180&amp;contents=write" target="_blank" rel="noopener">Get a token</a><br>GitHub opens with the form filled in. Under <b>Repository access</b> pick <b>Only select repositories</b> and choose <b>mchs-game-chart</b>, then tap <b>Generate token</b>, copy it, come back here and paste it in the Token box.</div>
       </div></div>
     <div class="card" id="gameAdmin"><div class="hd"><span class="h" style="font-size:20px;font-weight:800">Games</span><span class="hint">Deleting a game removes all of its charted stats from the season report.</span></div>
       <div id="gamesList"></div></div>
@@ -975,7 +976,7 @@ async function ghPutB64(path,b64,msg){
 async function ghDelete(path,msg){const sha=await ghSha(path);if(!sha)return;const r=await ghCall('DELETE',path,{message:msg,sha:sha},true);if(!r.ok&&r.status!==404)throw await ghErr(r);}
 function gameFile(id,g){return 'data/games/'+(g.date||'nodate')+'_'+slug(g.opp)+'_'+id+'.json';}
 function ghStatus(t,bad){const el=$('#ghInfo');el.textContent=t;el.style.color=bad?'var(--to)':'';}
-function renderGhInfo(){const t=ls.get('ghLast',0);ghStatus(ghToken()?('Last upload: '+fmtAgo(t)):'Add a token to upload. Loading works without one.');}
+function renderGhInfo(){const hp=$('#ghHelp');if(hp)hp.style.display=ghToken()?'none':'';const t=ls.get('ghLast',0);ghStatus(ghToken()?('Last upload: '+fmtAgo(t)):'Add a token to upload. Loading works without one.');}
 let ghBusy=false;
 async function ghUpload(){
   if(ghBusy)return;
