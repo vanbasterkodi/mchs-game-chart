@@ -1004,21 +1004,22 @@ async function ghUpload(){
     let JsPDF=null,pdfNote='';
     try{JsPDF=await pdfLib();}catch(e){pdfNote=' (PDF reports skipped: '+e.message+')';}
     if(JsPDF){
-      let made=0;
+      let made=0;const REPORT_FORMAT=2;const redoAll=ls.get('ghReportFmt',1)!==REPORT_FORMAT;
       for(let i=0;i<ids.length;i++){
-        const id=ids[i],hs=hashes[id];if(!hs||hs.rh===hs.h)continue;
+        const id=ids[i],hs=hashes[id];if(!hs||(hs.rh===hs.h&&!redoAll))continue;
         ghStatus('Making PDF for '+gameTitle(d.games[id])+'…');
         const out=buildPdfFor(JsPDF,{scope:'game',gid:id});const rp='data/reports/'+out.name;
         if(hs.r&&hs.r!==rp){try{await ghDelete(hs.r,'Rename report');}catch(e){}}
         await ghPutB64(rp,out.b64,'PDF report: '+gameTitle(d.games[id]));
         hs.r=rp;hs.rh=hs.h;ls.set('ghHashes',hashes);made++;
       }
-      if(ids.length&&(made||n||!ls.get('ghSeasonDone',false))){
+      if(ids.length&&(made||n||redoAll||!ls.get('ghSeasonDone',false))){
         ghStatus('Making season report…');
         const out=buildPdfFor(JsPDF,{scope:'season'},'MCHS-season-report.pdf');
         await ghPutB64('data/reports/MCHS-season-report.pdf',out.b64,'Season report ('+ids.length+' games)');
         ls.set('ghSeasonDone',true);
       }
+      ls.set('ghReportFmt',REPORT_FORMAT);
     }
     ghStatus('Saving full backup…');
     await ghPutB64('data/latest.json',b64utf8(JSON.stringify({app:'mchs-game-chart',format:1,exported:new Date().toISOString(),playbook:d.playbook,games:d.games})),'Backup from iPad ('+ids.length+' games)');
@@ -1209,7 +1210,7 @@ async function makePdf(){
 }
 
 /* ---------- version / updates ---------- */
-const APP_VERSION='2026-11-22 v5';
+const APP_VERSION='2026-11-22 v6';
 async function checkUpdate(manual){
   const info=$('#updInfo');
   try{
