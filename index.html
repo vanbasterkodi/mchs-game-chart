@@ -988,6 +988,18 @@ async function ghUpload(){
   try{
     for(const id in pend)await flush(id);
     const d=store.snapshot();const hashes=ls.get('ghHashes',{});let n=0;const ids=Object.keys(d.games);
+    // Safety: never let this device wipe games it has never seen (e.g. right after reinstalling the app).
+    ghStatus('Checking GitHub…');
+    const known=ls.get('ghKnown',{});ids.forEach(id=>known[id]=1);Object.keys(hashes).forEach(id=>known[id]=1);
+    const remote=await ghReadLatest();
+    if(remote){
+      const missing=Object.keys(remote.games||{}).filter(id=>!d.games[id]&&!known[id]);
+      if(missing.length){
+        const names=missing.slice(0,3).map(id=>gameTitle(remote.games[id])).join(', ');
+        throw new Error('Upload stopped: GitHub has '+missing.length+' game'+(missing.length===1?'':'s')+' this iPad doesn\'t ('+names+(missing.length>3?', …':'')+'). Tap Load from GitHub first so nothing is lost.');
+      }
+    }
+    ls.set('ghKnown',known);
     for(let i=0;i<ids.length;i++){
       const id=ids[i],g=d.games[id];
       let t=0,o=0;QS.forEach(q=>{t+=effScore(g,'team',q);o+=effScore(g,'opp',q);});
@@ -1022,23 +1034,30 @@ async function ghUpload(){
       ls.set('ghReportFmt',REPORT_FORMAT);
     }
     ghStatus('Saving full backup…');
-    await ghPutB64('data/latest.json',b64utf8(JSON.stringify({app:'mchs-game-chart',format:1,exported:new Date().toISOString(),playbook:d.playbook,games:d.games})),'Backup from iPad ('+ids.length+' games)');
+    const full=b64utf8(JSON.stringify({app:'mchs-game-chart',format:1,exported:new Date().toISOString(),playbook:d.playbook,games:d.games}));
+    await ghPutB64('data/latest.json',full,'Backup from iPad ('+ids.length+' games)');
+    if(ids.length){ghStatus('Saving dated backup…');await ghPutB64('data/backups/backup-'+todayStr()+'.json',full,'Daily backup '+todayStr()+' ('+ids.length+' games)');}
     ls.set('ghLast',Date.now());renderGhInfo();if(pdfNote)ghStatus('Uploaded'+pdfNote,true);toastMsg('Uploaded to GitHub'+(n?' ('+n+' game'+(n===1?'':'s')+' updated)':'')+' with PDF reports');
   }catch(e){ghStatus(e.message,true);}
   ghBusy=false;$('#ghUp').disabled=false;$('#ghLoad').disabled=false;
 }
+async function ghReadLatest(){
+  const r=await ghCall('GET','data/latest.json',null,false);
+  if(r.status===404)return null;
+  if(!r.ok)throw await ghErr(r);
+  const j=await r.json();let text;
+  if(j.content)text=unb64utf8(j.content);
+  else{const br=await fetch('https://api.github.com/repos/'+ghRepo()+'/git/blobs/'+j.sha,{headers:ghToken()?{Authorization:'Bearer '+ghToken(),Accept:'application/vnd.github+json'}:{Accept:'application/vnd.github+json'},cache:'no-store'});if(!br.ok)throw await ghErr(br);text=unb64utf8((await br.json()).content);}
+  const d=JSON.parse(text);
+  if(!d||d.app!=='mchs-game-chart'||!d.playbook||typeof d.games!=='object')throw new Error('The file on GitHub isn\'t a Game Chart backup.');
+  return d;
+}
 async function ghLoad(){
   if(ghBusy)return;ghBusy=true;$('#ghLoad').disabled=true;ghStatus('Loading from GitHub…');
   try{
-    const r=await ghCall('GET','data/latest.json',null,false);
-    if(r.status===404)throw new Error('Nothing uploaded to GitHub yet.');
-    if(!r.ok)throw await ghErr(r);
-    const j=await r.json();let text;
-    if(j.content)text=unb64utf8(j.content);
-    else{const br=await fetch('https://api.github.com/repos/'+ghRepo()+'/git/blobs/'+j.sha,{headers:ghToken()?{Authorization:'Bearer '+ghToken(),Accept:'application/vnd.github+json'}:{Accept:'application/vnd.github+json'},cache:'no-store'});if(!br.ok)throw await ghErr(br);text=unb64utf8((await br.json()).content);}
-    const d=JSON.parse(text);
-    if(!d||d.app!=='mchs-game-chart'||!d.playbook||typeof d.games!=='object')throw new Error('The file on GitHub isn\'t a Game Chart backup.');
-    pendingRestore=d;const n=Object.keys(d.games).length;
+    const d=await ghReadLatest();if(!d)throw new Error('Nothing uploaded to GitHub yet.');
+    pendingRestore=Object.assign({},d,{fromGitHub:true});
+    const n=Object.keys(d.games).length;
     $('#bkRestoreTxt').textContent='From GitHub, uploaded '+new Date(d.exported).toLocaleString()+': '+n+' game'+(n===1?'':'s')+' and '+((d.playbook.plays||[]).length)+' plays. Loading replaces the '+Object.keys(games).length+' game(s) and plays on this device.';
     $('#bkRestore').style.display='';$('#backupCard').scrollIntoView({behavior:'smooth',block:'start'});
     renderGhInfo();
@@ -1210,7 +1229,7 @@ async function makePdf(){
 }
 
 /* ---------- version / updates ---------- */
-const APP_VERSION='2026-11-22 v6';
+const APP_VERSION='2026-11-22 v7';
 async function checkUpdate(manual){
   const info=$('#updInfo');
   try{
@@ -1269,6 +1288,7 @@ function bindBackup(){
     if(!pendingRestore)return;
     for(const id in pend)delete pend[id];
     for(const id in deleted)delete deleted[id];
+    if(pendingRestore.fromGitHub){const kn=ls.get('ghKnown',{});Object.keys(pendingRestore.games||{}).forEach(id=>kn[id]=1);ls.set('ghKnown',kn);}
     gameId=null;ls.set('game',null);$('#scoreTbl').dataset.built='';$('#rebTbl').dataset.built='';
     store.restore(pendingRestore,applyData);
     $('#bkRestore').style.display='none';pendingRestore=null;banner('');toastMsg('Backup restored');
