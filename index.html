@@ -86,6 +86,18 @@ table.sc .tot{font-weight:800;font-size:16px}
 .qb{min-width:52px;padding:8px 10px;border-radius:999px;border:1px solid var(--line2);background:var(--card);font-weight:800;font-family:"Barlow Condensed";font-size:18px}
 .qb.on{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:inset 0 -3px 0 var(--gold)}
 .qbar .sp{flex:1}
+.undo{border:1px solid var(--line2);background:var(--card);border-radius:999px;padding:7px 12px;font-weight:700;font-size:13px;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.undo:disabled{opacity:.4}
+.tos{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-left:auto}
+.tog{display:flex;gap:4px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:3px 6px 3px 10px}
+.tog .tn{font-size:11px;font-weight:800;letter-spacing:.05em;margin-right:2px}
+.tog .tn.team{color:var(--off)} .tog .tn.opp{color:var(--def)}
+.tob{min-width:34px;height:30px;border-radius:999px;border:1.5px solid var(--line2);background:var(--card);font-weight:800;font-size:12px;font-variant-numeric:tabular-nums;padding:0 6px}
+.tob.half{min-width:30px;border-style:dashed}
+.tob.used{color:#fff;text-decoration:line-through;border-style:solid}
+.tob.used.team{background:var(--off);border-color:var(--off)} .tob.used.opp{background:var(--def);border-color:var(--def)}
+.tog .gap{width:4px}
+@media(max-width:700px){.tos{margin-left:0;width:100%}}
 .chk{font-size:13px;color:var(--ink2);display:flex;gap:6px;align-items:center}
 
 /* sections */
@@ -482,7 +494,7 @@ function patchGame(id,patch){
   if(!games[id])return;
   deepMerge(games[id],patch);
   pend[id]=deepMerge(pend[id]||{},patch);
-  clearTimeout(timers[id]);timers[id]=setTimeout(()=>flush(id),250);
+  clearTimeout(timers[id]);if(store&&store.kind==='local')flush(id);else timers[id]=setTimeout(()=>flush(id),250);
   renderAll();
 }
 async function flush(id){
@@ -597,7 +609,38 @@ function bindHeaderFields(){
 function renderQbar(){
   const g=game();const qs=usedOT(g)||curQ==='ot'?QS:QS.slice(0,4);
   $('#qbar').innerHTML='<span class="lbl">Charting</span>'+QS.map(q=>(q==='ot'&&!qs.includes('ot'))?'':'<button class="qb'+(q===curQ?' on':'')+'" data-q="'+q+'">'+QL[q]+'</button>').join('')+
-    (qs.includes('ot')?'':'<button class="btn sm" data-q="ot" style="margin-left:2px">+ OT</button>');
+    (qs.includes('ot')?'':'<button class="btn sm" data-q="ot" style="margin-left:2px">+ OT</button>')+
+    undoButton()+timeoutsHtml(g);
+}
+/* ---------- timeouts: 3 full (60) + 2 thirty per team ---------- */
+const TO_FULL=3,TO_HALF=2;
+function toUsed(g,side,kind){const v=(((g&&g.tos)||{})[side]||{})[kind];return Math.max(0,Math.min(kind==='full'?TO_FULL:TO_HALF,+v||0));}
+function timeoutsHtml(g){
+  if(!g)return'';
+  const grp=side=>{const f=toUsed(g,side,'full'),h=toUsed(g,side,'half');let b='';
+    for(let i=0;i<TO_FULL;i++)b+='<button class="tob '+side+(i<f?' used':'')+'" data-to="'+side+'|full|'+i+'" aria-label="'+(side==='team'?'MCHS':'Opp')+' 60-second timeout '+(i+1)+(i<f?' (used)':'')+'">60</button>';
+    b+='<span class="gap"></span>';
+    for(let i=0;i<TO_HALF;i++)b+='<button class="tob half '+side+(i<h?' used':'')+'" data-to="'+side+'|half|'+i+'" aria-label="'+(side==='team'?'MCHS':'Opp')+' 30-second timeout '+(i+1)+(i<h?' (used)':'')+'">30</button>';
+    return'<span class="tog" title="Timeouts: tap one when it\'s used, tap again to undo"><span class="tn '+side+'">'+(side==='team'?'MCHS':'OPP')+' TO</span>'+b+'</span>';};
+  return'<span class="tos">'+grp('team')+grp('opp')+'</span>';
+}
+function tapTimeout(spec){
+  if(!canWrite)return;const g=game();if(!g)return;
+  const [side,kind,iStr]=spec.split('|');const i=+iStr;const used=toUsed(g,side,kind);
+  const next=i<used?used-1:used+1;   // tap a used one -> give one back; tap an open one -> use one
+  patchGame(gameId,{tos:{[side]:{[kind]:next}}});
+  const left=(kind==='full'?TO_FULL:TO_HALF)-next;
+  toastMsg((side==='team'?'MCHS':'Opponent')+': '+left+' '+(kind==='full'?'full':'30-second')+' timeout'+(left===1?'':'s')+' left');
+}
+/* ---------- undo (last entries, per game, survives reopening) ---------- */
+function undoStack(gid){const all=ls.get('undo',{});return all[gid]||[];}
+function saveUndo(gid,st){const all=ls.get('undo',{});if(st.length)all[gid]=st.slice(-60);else delete all[gid];for(const k in all)if(!games[k]&&k!==gid)delete all[k];ls.set('undo',all);}
+function lastValidUndo(gid){const g=games[gid];const st=undoStack(gid);for(let i=st.length-1;i>=0;i--){const e=st[i];const arr=marksOf(g,e.pid,e.q);if(arr.length===e.len&&arr[e.len-1]===e.code)return{e:e,i:i};}return null;}
+function undoButton(){
+  const g=game();if(!g||!canWrite)return'';const u=lastValidUndo(gameId);
+  if(!u)return'<button class="undo" id="undoBtn" disabled>↶ Undo</button>';
+  const pl=plays.find(p=>p.id===u.e.pid);
+  return'<button class="undo" id="undoBtn" title="Undo the last mark">↶ '+esc(sym(u.e.code))+' · '+esc(playLabel(pl)||'Unnamed')+' ('+QL[u.e.q]+')</button>';
 }
 
 /* ---------- render: chart sections ---------- */
@@ -652,6 +695,7 @@ let lastAdd=null,toastT=null;
 function addMark(code){
   const g=game();if(!g)return;const pid=sheet.pid,q=sheet.q;
   const arr=marksOf(g,pid,q).concat([code]);
+  const st=undoStack(gameId);st.push({pid:pid,q:q,code:code,len:arr.length});saveUndo(gameId,st);
   patchGame(gameId,{marks:{[pid]:{[q]:arr}}});
   const pl=plays.find(p=>p.id===pid);
   lastAdd={gid:gameId,pid,q,len:arr.length};
@@ -665,9 +709,14 @@ function removeMark(i){
 }
 function toast(t){$('#toastTxt').textContent=t;$('#toast').classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>$('#toast').classList.remove('show'),4000);}
 function undo(){
-  if(!lastAdd)return;const {gid,pid,q,len}=lastAdd;const g=games[gid];if(!g)return;
-  const arr=marksOf(g,pid,q).slice();if(arr.length===len){arr.pop();patchGame(gid,{marks:{[pid]:{[q]:arr}}});}
-  lastAdd=null;$('#toast').classList.remove('show');
+  const gid=(lastAdd&&lastAdd.gid)||gameId;const g=games[gid];if(!g||!canWrite)return;
+  const u=lastValidUndo(gid);let st=undoStack(gid);
+  if(!u){saveUndo(gid,[]);lastAdd=null;renderAll();return;}
+  st=st.slice(0,u.i);saveUndo(gid,st);
+  const arr=marksOf(g,u.e.pid,u.e.q).slice(0,u.e.len-1);
+  patchGame(gid,{marks:{[u.e.pid]:{[u.e.q]:arr}}});
+  const pl=plays.find(p=>p.id===u.e.pid);
+  lastAdd=null;toastMsg('Undid '+sym(u.e.code)+' on '+(playLabel(pl)||'Unnamed')+' ('+QL[u.e.q]+')');
 }
 
 /* ---------- report ---------- */
@@ -850,7 +899,7 @@ function bind(){
   $$('.tab').forEach(t=>t.onclick=()=>{tab=t.dataset.tab;setHash(tab);renderAll();window.scrollTo(0,0);});
   window.addEventListener('hashchange',()=>{const h=location.hash.slice(1);if(['chart','report','plays','legend'].includes(h)){tab=h;renderAll();}});
   $('#gameSel').onchange=e=>{gameId=e.target.value;ls.set('game',gameId);$('#scoreTbl').dataset.built='';$('#rebTbl').dataset.built='';renderAll();};
-  $('#qbar').onclick=e=>{const b=e.target.closest('[data-q]');if(!b)return;curQ=b.dataset.q;ls.set('q',curQ);renderAll();};
+  $('#qbar').onclick=e=>{if(e.target.closest('#undoBtn')){undo();return;}const tb=e.target.closest('[data-to]');if(tb){tapTimeout(tb.dataset.to);return;}const b=e.target.closest('[data-q]');if(!b)return;curQ=b.dataset.q;ls.set('q',curQ);renderAll();};
   $('#view-chart').addEventListener('click',e=>{
     if(!canWrite)return;const row=e.target.closest('.row[data-pid]');if(!row)return;
     const qc=e.target.closest('.qc');openSheet(row.dataset.pid,qc?qc.dataset.q:curQ);
@@ -1022,7 +1071,7 @@ async function ghUpload(){
     let JsPDF=null,pdfNote='';
     try{JsPDF=await pdfLib();}catch(e){pdfNote=' (PDF reports skipped: '+e.message+')';}
     if(JsPDF){
-      let made=0;const REPORT_FORMAT=4;const redoAll=ls.get('ghReportFmt',1)!==REPORT_FORMAT;
+      let made=0;const REPORT_FORMAT=5;const redoAll=ls.get('ghReportFmt',1)!==REPORT_FORMAT;
       for(let i=0;i<ids.length;i++){
         const id=ids[i],hs=hashes[id];if(!hs||(hs.rh===hs.h&&!redoAll))continue;
         ghStatus('Making PDF for '+gameTitle(d.games[id])+'…');
@@ -1125,7 +1174,9 @@ function buildPdfDoc(JsPDF,nameOverride){
       doc.autoTable(Object.assign({},base,{startY:y,head:[['Score'].concat(qs.map(q=>QL[q])).concat(['Final'])],body:[tr,orr,pm],tableWidth:330,columnStyles:{0:{halign:'left',fontStyle:'bold'}}}));
       const rb=[['MCHS',effReb(g,'team','h1'),effReb(g,'team','h2'),effReb(g,'team','h1')+effReb(g,'team','h2')],['Opp',effReb(g,'opp','h1'),effReb(g,'opp','h2'),effReb(g,'opp','h1')+effReb(g,'opp','h2')]];
       doc.autoTable(Object.assign({},base,{startY:y,head:[['Rebounds','1st half','2nd half','Total']],body:rb,tableWidth:230,margin:{left:M+345},columnStyles:{0:{halign:'left',fontStyle:'bold'}}}));
-      y=Math.max(doc.lastAutoTable.finalY,y+60)+14;
+      const tFin=doc.lastAutoTable.finalY;
+      doc.autoTable(Object.assign({},base,{startY:y,head:[['Timeouts','60s','30s']],body:[['MCHS',toUsed(g,'team','full')+' of '+TO_FULL,toUsed(g,'team','half')+' of '+TO_HALF],['Opp',toUsed(g,'opp','full')+' of '+TO_FULL,toUsed(g,'opp','half')+' of '+TO_HALF]],tableWidth:W-2*M-585,margin:{left:M+585},columnStyles:{0:{halign:'left',fontStyle:'bold'}}}));
+      y=Math.max(doc.lastAutoTable.finalY,tFin,y+60)+14;
     }else{
       const list=sortedGames().map(e=>e[1]).filter(g=>gs.indexOf(g)>=0).reverse();
       const body=list.map(g=>{let t=0,o=0;qList.forEach(q=>{t+=effScore(g,'team',q);o+=effScore(g,'opp',q);});return[g.num||'',g.date?fmtDate(g.date):'',g.opp||'',g.site||'',t+' - '+o,t>o?'W':t<o?'L':'T'];});
@@ -1235,7 +1286,7 @@ async function makePdf(){
 }
 
 /* ---------- version / updates ---------- */
-const APP_VERSION='2026-11-23 v9';
+const APP_VERSION='2026-11-23 v11';
 async function checkUpdate(manual){
   const info=$('#updInfo');
   try{
@@ -1252,6 +1303,9 @@ async function checkUpdate(manual){
     }else if(manual)info.textContent='You have the latest version.';
   }catch(e){if(manual)info.textContent='Can\'t check right now (no internet?).';}
 }
+function flushAllNow(){for(const id in timers)clearTimeout(timers[id]);for(const id in pend)flush(id);if(pbDirty||pbTimer){clearTimeout(pbTimer);if(store&&plays.length)store.setPlaybook({plays:clone(plays)});pbDirty=false;}}
+window.addEventListener('pagehide',flushAllNow);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)flushAllNow();});
 function bindUpdate(){
   $('#appVer').textContent=APP_VERSION;
   $('#updBtn').onclick=()=>checkUpdate(true);
