@@ -413,6 +413,7 @@ const CODES={
   A1:{sym:'2(?)',label:'Foul +1 on a 2',cls:'make',ask:[0,1],askq:'Made the +1?'},
   A3:{sym:'3(?)',label:'Foul +1 on a 3',cls:'make',ask:[0,1],askq:'Made the +1? (1 = 4-pt play)'},
   F:{sym:'F',label:'Foul (no shots)',cls:'foul'},
+  TF:{sym:'TF(?)',label:'Technical foul — FT\'s',cls:'foul',ask:[0,1,2],askq:"Technical FT's made?"},
   T:{sym:'T',label:'Turnover',cls:'to'},
   S:{sym:'S',label:'Steal',cls:'defl'},
   C:{sym:'C',label:'Charge',cls:'defl'},
@@ -421,12 +422,12 @@ const CODES={
   D:{sym:'D',label:'Deflection',cls:'defl'},
 };
 function parse(m){const i=m.indexOf(':');return i<0?{c:m,n:null}:{c:m.slice(0,i),n:+m.slice(i+1)};}
-function sym(m){const p=parse(m);if(p.c==='FT')return'F('+p.n+')';if(p.c==='A1')return'2('+p.n+')';if(p.c==='A3')return'3('+p.n+')';return CODES[p.c]?CODES[p.c].sym:m;}
+function sym(m){const p=parse(m);if(p.c==='FT')return'F('+p.n+')';if(p.c==='A1')return'2('+p.n+')';if(p.c==='A3')return'3('+p.n+')';if(p.c==='TF')return'TF('+p.n+')';return CODES[p.c]?CODES[p.c].sym:m;}
 function clsOf(m){const p=parse(m);return 'c-'+(CODES[p.c]?CODES[p.c].cls:'miss');}
-function lblOf(m){const p=parse(m);const d=CODES[p.c];if(!d)return m;if(p.c==='FT')return"FT's — made "+p.n;if(p.c==='A1')return'And-one on a 2, +1 '+(p.n?'made':'missed');if(p.c==='A3')return'And-one on a 3, +1 '+(p.n?'made':'missed');return d.label;}
+function lblOf(m){const p=parse(m);const d=CODES[p.c];if(!d)return m;if(p.c==='FT')return"FT's — made "+p.n;if(p.c==='A1')return'And-one on a 2, +1 '+(p.n?'made':'missed');if(p.c==='TF')return'Technical foul, '+p.n+' FT made';if(p.c==='A3')return'And-one on a 3, +1 '+(p.n?'made':'missed');return d.label;}
 
 /* ---------- stats ---------- */
-function blank(){return{poss:0,pts:0,fgm:0,fga:0,tpm:0,tpa:0,lm:0,la:0,jm:0,ja:0,ftm:0,trips:0,to:0,stl:0,chg:0,orb:0,drb:0,fouls:0,defl:0,scored:0};}
+function blank(){return{tf:0,tfp:0,poss:0,pts:0,fgm:0,fga:0,tpm:0,tpa:0,lm:0,la:0,jm:0,ja:0,ftm:0,trips:0,to:0,stl:0,chg:0,orb:0,drb:0,fouls:0,defl:0,scored:0};}
 function tally(list,a){
   for(const m of (list||[])){
     const {c,n}=parse(m);let p=0,poss=1;
@@ -446,6 +447,7 @@ function tally(list,a){
       case'OR':a.orb++;poss=0;break;
       case'DR':a.drb++;poss=0;break;
       case'F':a.fouls++;poss=0;break;
+      case'TF':p=n||0;a.ftm+=p;a.tf++;a.tfp+=p;poss=0;break;
       case'D':a.defl++;poss=0;break;
       default:poss=0;
     }
@@ -454,7 +456,7 @@ function tally(list,a){
   return a;
 }
 function addInto(a,b){for(const k in b)a[k]+=b[k];return a;}
-const ppp=a=>a.poss?a.pts/a.poss:null;
+const ppp=a=>a.poss?(a.pts-(a.tfp||0))/a.poss:null;
 const f2=v=>v==null?'—':v.toFixed(2);
 const pct=(m,a)=>a?Math.round(100*m/a)+'%':'—';
 
@@ -624,7 +626,7 @@ function renderChart(){
     $('#col-'+s.key).innerHTML=h;
   });
   $('#keyBox').innerHTML=Object.entries(CODES).map(([c,d])=>'<div><span class="chip c-'+d.cls+'">'+esc(d.sym)+'</span>'+esc(d.label)+'</div>').join('')+
-    '<div style="grid-column:1/-1" class="hint">F(?) — fill in # of made FT\'s, e.g. F(2). PPP = points ÷ possessions (fouls without shots and deflections don\'t count as a possession).</div>';
+    '<div style="grid-column:1/-1" class="hint">F(?) — fill in # of made FT\'s, e.g. F(2). PPP = points ÷ possessions (fouls without shots, technicals, deflections and rebounds don\'t count as a possession).</div>';
 }
 
 /* ---------- entry sheet ---------- */
@@ -702,17 +704,17 @@ function renderReport(){
   if(rSide!=='off'){const r=rank(['def','dib'],false);const [t,b]=split(r);hl+='<div><div class="tt" style="color:var(--def)">Defense — best (lowest PPP)</div>'+li(t)+'</div><div><div class="tt" style="color:var(--def)">Defense — getting hurt</div>'+li(b)+'</div>';}
   $('#hilites').innerHTML=hl;
   // tables
-  const cols=[['name','Play'],['poss','Poss'],['pts','Pts'],['ppp','PPP'],['fg','FG'],['lay','Layups'],['jmp','Jumpers'],['tp','3PT'],['ft','FT pts'],['to','TO'],['stl','S'],['chg','C'],['defl','D'],['orb','OR'],['drb','DR']];
+  const cols=[['name','Play'],['poss','Poss'],['pts','Pts'],['ppp','PPP'],['fg','FG'],['lay','Layups'],['jmp','Jumpers'],['tp','3PT'],['ft','FT pts'],['tf','Tech'],['to','TO'],['stl','S'],['chg','C'],['defl','D'],['orb','OR'],['drb','DR']];
   let th='';
   SECTIONS.filter(s=>rSide==='all'||(rSide==='def')===isDef(s.key)).forEach(s=>{
     const list=plays.filter(p=>p.sec===s.key&&(!p.hidden||rows[p.id].poss));
     const sb=sortBy[s.key]||'order';
-    const vals=p=>{const a=rows[p.id];return{name:(playLabel(p)||'~').toLowerCase(),poss:a.poss,pts:a.pts,ppp:ppp(a)==null?-1:ppp(a),fg:a.fga?a.fgm/a.fga:-1,lay:a.la?a.lm/a.la:-1,jmp:a.ja?a.jm/a.ja:-1,tp:a.tpa?a.tpm/a.tpa:-1,ft:a.ftm,to:a.to,stl:a.stl,chg:a.chg,defl:a.defl,orb:a.orb,drb:a.drb};};
+    const vals=p=>{const a=rows[p.id];return{name:(playLabel(p)||'~').toLowerCase(),poss:a.poss,pts:a.pts,ppp:ppp(a)==null?-1:ppp(a),fg:a.fga?a.fgm/a.fga:-1,lay:a.la?a.lm/a.la:-1,jmp:a.ja?a.jm/a.ja:-1,tp:a.tpa?a.tpm/a.tpa:-1,ft:a.ftm,tf:a.tf,to:a.to,stl:a.stl,chg:a.chg,defl:a.defl,orb:a.orb,drb:a.drb};};
     const sorted=sb==='order'?list:list.slice().sort((x,y)=>{const a=vals(x)[sb],b=vals(y)[sb];return sb==='name'?String(a).localeCompare(String(b)):(b-a);});
     const tot=list.reduce((a,p)=>addInto(a,rows[p.id]),blank());
     const good=isDef(s.key)?'var(--def)':'var(--off)';
     const bar=a=>{const v=ppp(a);if(v==null)return'';const w=Math.min(100,v/2*100);return'<span class="bar"><i style="width:'+w+'%;background:'+good+'"></i><span class="ref" style="left:50%"></span></span>';};
-    const tr=(nm,a,cls)=>'<tr class="'+(cls||'')+(a.poss||a.defl?'':' zero')+'"><td class="nm">'+nm+'</td><td>'+a.poss+'</td><td>'+a.pts+'</td><td><span class="pppc">'+bar(a)+'<b>'+f2(ppp(a))+'</b></span></td><td>'+a.fgm+'-'+a.fga+' <span class="muted">'+pct(a.fgm,a.fga)+'</span></td><td>'+a.lm+'-'+a.la+'</td><td>'+a.jm+'-'+a.ja+'</td><td>'+a.tpm+'-'+a.tpa+'</td><td>'+a.ftm+(a.trips?' <span class="muted">('+a.trips+' trips)</span>':'')+'</td><td>'+a.to+'</td><td>'+a.stl+'</td><td>'+a.chg+'</td><td>'+a.defl+'</td><td>'+a.orb+'</td><td>'+a.drb+'</td></tr>';
+    const tr=(nm,a,cls)=>'<tr class="'+(cls||'')+(a.poss||a.defl||a.pts||a.tf?'':' zero')+'"><td class="nm">'+nm+'</td><td>'+a.poss+'</td><td>'+a.pts+'</td><td><span class="pppc">'+bar(a)+'<b>'+f2(ppp(a))+'</b></span></td><td>'+a.fgm+'-'+a.fga+' <span class="muted">'+pct(a.fgm,a.fga)+'</span></td><td>'+a.lm+'-'+a.la+'</td><td>'+a.jm+'-'+a.ja+'</td><td>'+a.tpm+'-'+a.tpa+'</td><td>'+a.ftm+(a.trips?' <span class="muted">('+a.trips+' trips)</span>':'')+'</td><td>'+a.tf+'</td><td>'+a.to+'</td><td>'+a.stl+'</td><td>'+a.chg+'</td><td>'+a.defl+'</td><td>'+a.orb+'</td><td>'+a.drb+'</td></tr>';
     th+='<div class="card"><div class="hd"><span class="h" style="font-size:20px;font-weight:800;color:var(--'+s.tone+')">'+esc(s.label)+'</span><span class="hint">'+(isDef(s.key)?'Opponent results · lower PPP is better':'Higher PPP is better')+' · bar mark = 1.00</span></div><div class="tw"><table class="rp" data-sec="'+s.key+'"><tr>'+cols.map(([k,l])=>'<th data-k="'+k+'">'+l+(sb===k?' ▾':'')+'</th>').join('')+'</tr>'+
       sorted.map(p=>tr(esc(playLabel(p)||'Unnamed')+(p.tag?' <span class="muted" style="font-weight:500">'+esc(p.tag)+'</span>':'')+(p.hidden?' <span class="muted">(hidden)</span>':''),rows[p.id])).join('')+tr('Total',tot,'tot')+'</table></div></div>';
   });
@@ -757,13 +759,14 @@ function movePlay(pid,dir){
 /* ---------- legend ---------- */
 const LEG_GROUPS=[
   ['Shots',['ML','XL','MJ','XJ','M3','X3']],
-  ['Fouls & free throws',['FT','A1','A3','F']],
+  ['Fouls & free throws',['FT','A1','A3','F','TF']],
   ['Turnovers & hustle',['T','S','C','D']],
   ['Rebounds',['OR','DR']],
 ];
 const LEG_INFO={
   ML:['2 pts','1 possession'],XL:['0 pts','1 possession'],MJ:['2 pts','1 possession'],XJ:['0 pts','1 possession'],
   M3:['3 pts','1 possession'],X3:['0 pts','1 possession'],
+  TF:["Pts = technical FT's made, e.g. TF(2). Counts in the score, not in PPP",'Not a possession (shooting team keeps the ball)'],
   FT:["Pts = FT's made, e.g. F(2)",'1 possession'],A1:['2 + the FT, e.g. 2(1) = 3 pts','1 possession'],A3:['3 + the FT, e.g. 3(1) = 4 pts','1 possession'],
   F:['0 pts','Not a possession'],T:['0 pts','1 possession'],S:['0 pts · also counts as a turnover','1 possession'],C:['0 pts · also counts as a turnover','1 possession'],OR:['0 pts · extends the possession','Not a possession'],DR:['0 pts · ends their possession','Not a possession'],D:['Defensive stat','Not a possession'],
 };
@@ -1016,7 +1019,7 @@ async function ghUpload(){
     let JsPDF=null,pdfNote='';
     try{JsPDF=await pdfLib();}catch(e){pdfNote=' (PDF reports skipped: '+e.message+')';}
     if(JsPDF){
-      let made=0;const REPORT_FORMAT=2;const redoAll=ls.get('ghReportFmt',1)!==REPORT_FORMAT;
+      let made=0;const REPORT_FORMAT=3;const redoAll=ls.get('ghReportFmt',1)!==REPORT_FORMAT;
       for(let i=0;i<ids.length;i++){
         const id=ids[i],hs=hashes[id];if(!hs||(hs.rh===hs.h&&!redoAll))continue;
         ghStatus('Making PDF for '+gameTitle(d.games[id])+'…');
@@ -1079,8 +1082,8 @@ async function pdfLib(){
   if(!window.jspdf.jsPDF.API.autoTable)await loadScript('jspdf.plugin.autotable.min.js');
   return window.jspdf.jsPDF;
 }
-const SECDEF_COLS=['Play','Poss','Pts','PPP','FG','FG%','Lay','Jmp','3PT','FT pts','TO','S','C','D','OR','DR'];
-function statRow(name,a){return[name,a.poss,a.pts,f2(ppp(a)),a.fgm+'-'+a.fga,pct(a.fgm,a.fga),a.lm+'-'+a.la,a.jm+'-'+a.ja,a.tpm+'-'+a.tpa,a.ftm,a.to,a.stl,a.chg,a.defl,a.orb,a.drb];}
+const SECDEF_COLS=['Play','Poss','Pts','PPP','FG','FG%','Lay','Jmp','3PT','FT pts','Tech','TO','S','C','D','OR','DR'];
+function statRow(name,a){return[name,a.poss,a.pts,f2(ppp(a)),a.fgm+'-'+a.fga,pct(a.fgm,a.fga),a.lm+'-'+a.la,a.jm+'-'+a.ja,a.tpm+'-'+a.tpa,a.ftm,a.tf,a.to,a.stl,a.chg,a.defl,a.orb,a.drb];}
 let lastPdf=null;
 function bindPdf(){
   $('#pdfBtn').onclick=makePdf;
@@ -1145,7 +1148,7 @@ function buildPdfDoc(JsPDF,nameOverride){
         foot:[statRow('TOTAL',tot)],
         headStyles:{fillColor:[236,238,233],textColor:INK,fontStyle:'bold'},footStyles:{fillColor:[236,238,233],textColor:INK,fontStyle:'bold'},
         columnStyles:{0:{halign:'left',fontStyle:'bold',cellWidth:120},3:{fontStyle:'bold'}},
-        didParseCell:function(c){if(c.section==='body'&&c.column.index>0&&rows&&c.row.raw&&c.row.raw[1]===0&&c.row.raw[15]===0&&c.row.raw[13]===0)c.cell.styles.textColor=MUTE;}
+        didParseCell:function(c){if(c.section==='body'&&c.column.index>0&&rows&&c.row.raw&&c.row.raw[1]===0&&c.row.raw[2]===0&&c.row.raw[10]===0&&c.row.raw[16]===0&&c.row.raw[14]===0)c.cell.styles.textColor=MUTE;}
       }));
       y=doc.lastAutoTable.finalY+12;
     });
@@ -1229,7 +1232,7 @@ async function makePdf(){
 }
 
 /* ---------- version / updates ---------- */
-const APP_VERSION='2026-11-22 v7';
+const APP_VERSION='2026-11-23 v8';
 async function checkUpdate(manual){
   const info=$('#updInfo');
   try{
